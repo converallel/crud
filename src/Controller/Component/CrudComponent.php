@@ -328,7 +328,7 @@ class CrudComponent extends Component
                 break;
             case 'add':
                 $method = $this->_bulkAction ? 'newEntities' : 'newEntity';
-                $entity = $this->_table->{$method}($requestData, $objectHydration);
+                $entity = $this->_table->{$method}($requestData ?: null, $objectHydration);
                 break;
             case 'edit':
                 if ($this->_bulkAction) {
