@@ -85,7 +85,7 @@ class CrudComponent extends Component
         'bulkAdd' => true,
         'bulkEdit' => true,
         'bulkDelete' => true,
-        'infiniteScroll' => false
+        'infiniteScroll' => null
     ];
 
     public function __construct(ComponentRegistry $registry, array $config = [])
@@ -158,6 +158,7 @@ class CrudComponent extends Component
      *
      * By default, `$options` will recognize the following keys:
      *
+     * - `action` - The action to execute this query with. One of (index, view, add, edit, delete)
      * - `allowMethods` - The HTTP methods allowed for the current action.
      * - `updateMethods` - The HTTP methods that will carry out an update action in the database.
      *   Usually one of (post, patch, put, delete)
@@ -169,7 +170,7 @@ class CrudComponent extends Component
      * - `viewVars` - Extra view variables to load into the view, e.g., ['tags', 'files' => ['contain' => 'Users'], ...].
      * - `view` - View to use for rendering.
      *
-     * @param array|Query|EntityInterface|ResultSetInterface|ResultSet $query
+     * @param array|Query|EntityInterface|ResultSetInterface|ResultSet|null $query
      * @param array $options
      * @return \Cake\Http\Response|null
      */
@@ -178,8 +179,9 @@ class CrudComponent extends Component
         $this->_setBulkAction();
         $options = $this->_validateOptions($options);
         $entity = $this->_getEntity($query, $options);
-        $options = array_merge($this->_getActionConfig(), $options);
+        $options = $this->_getActionConfig($options);
 
+        $action = $options['allowMethods'] ?? $this->_action;
         $allowMethods = $options['allowMethods'];
         $updateMethods = $options['updateMethods'];
         $method = $options['method'];
@@ -199,7 +201,7 @@ class CrudComponent extends Component
             $message = $success ? $successMessage : $errorMessage;
 
             if ($this->_serialized) {
-                switch ($this->_action) {
+                switch ($action) {
                     case 'index':
                         $serializeData = $entity;
                         break;
@@ -234,7 +236,7 @@ class CrudComponent extends Component
             return $this->serialize($entity);
         }
 
-        if ($this->_action !== 'delete') {
+        if ($action !== 'delete') {
             $name = $entity instanceof \Countable ? lcfirst($this->_table->getAlias()) : $this->_entityName;
             $this->_controller->set($name, $entity);
             $this->setExtraViews($viewVars);
@@ -248,6 +250,7 @@ class CrudComponent extends Component
     protected function _validateOptions($options)
     {
         $allowedOptions = [
+            'action',
             'allowMethods',
             'updateMethods',
             'successMessage',
@@ -265,6 +268,11 @@ class CrudComponent extends Component
             }
         }
 
+        if (isset($options['action']) && !in_array($options['action'], $this->_crudActions)) {
+            throw new \InvalidArgumentException(
+                "Action should be one of (" . implode(', ', $this->_crudActions) . ').');
+        }
+
         return $options;
     }
 
@@ -272,7 +280,7 @@ class CrudComponent extends Component
      * Get entity/entities used for the current action.
      * If query is empty, returns the default entity/entities for the current action.
      *
-     * @param array|Query|EntityInterface|ResultSetInterface|ResultSet $query
+     * @param array|Query|EntityInterface|ResultSetInterface|ResultSet|null $query
      * @param array $options
      * @return EntityInterface|ResultSetInterface|ResultSet|null
      */
@@ -282,6 +290,10 @@ class CrudComponent extends Component
             return $query;
         }
 
+        if (is_null($query)) {
+            $query = [];
+        }
+
         if (!is_array($query) && !($query instanceof Query)) {
             throw new InternalErrorException('Invalid type for the first parameter');
         }
@@ -289,12 +301,13 @@ class CrudComponent extends Component
         $requestData = $this->_request->getData();
         $id = $this->_request->getParam('id') ?: ($this->_request->getParam('pass')[0] ?? null);
         $objectHydration = $options['objectHydration'] ?? [];
+        $action = $options['action'] ?? $this->_action;
 
-        if ($this->_bulkAction && !$this->getConfig('bulk' . ucfirst($this->_action))) {
-            throw new BadRequestException("Cannot bulk $this->_action $this->_table");
+        if ($this->_bulkAction && !$this->getConfig('bulk' . ucfirst($action))) {
+            throw new BadRequestException("Cannot bulk $action $this->_table");
         }
 
-        switch ($this->_action) {
+        switch ($action) {
             case 'index':
                 if (is_array($query)) {
                     $query = $this->_table->find('all', $query);
@@ -386,21 +399,23 @@ class CrudComponent extends Component
     /**
      * Get the configuration for the current action.
      *
+     * @param $options
      * @return array $config
      */
-    protected function _getActionConfig()
+    protected function _getActionConfig($options)
     {
         $config = [
             'method' => 'save',
             'successMessage' => 'Success!',
-            'errorMessage' => 'The %s could not be %s. Please, try again.',
+            'errorMessage' => 'Request failed. Please, try again.',
             'allowMethods' => [],
             'updateMethods' => []
         ];
 
+        $action = $options['action'] ?? $this->_action;
         $override = [];
         $entity = null;
-        switch ($this->_action) {
+        switch ($action) {
             case 'index':
                 $override = [];
                 break;
@@ -429,12 +444,9 @@ class CrudComponent extends Component
                 break;
         }
 
-        $name = $this->_bulkAction ? lcfirst($this->_controller->getName()) : $this->_entityName;
-        $method = $config['method'] . 'd';
         $config = array_merge($config, $override);
-        $config['errorMessage'] = __(sprintf($config['errorMessage'], $name, $method));
 
-        return $config;
+        return array_merge($config, $options);
     }
 
     /**
