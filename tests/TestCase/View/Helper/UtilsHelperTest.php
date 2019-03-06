@@ -1,22 +1,22 @@
 <?php
-namespace Crud\Test\TestCase\Controller\Component;
+namespace Crud\Test\TestCase\View\Helper;
 
-use Crud\Controller\Component\CrudComponent;
-use Cake\Controller\ComponentRegistry;
+use Crud\View\Helper\UtilsHelper;
 use Cake\TestSuite\TestCase;
+use Cake\View\View;
 
 /**
- * Crud\Controller\Component\CrudComponent Test Case
+ * Crud\View\Helper\UtilsHelper Test Case
  */
-class CrudComponentTest extends TestCase
+class UtilsHelperTest extends TestCase
 {
 
     /**
      * Test subject
      *
-     * @var \Crud\Controller\Component\CrudComponent
+     * @var \Crud\View\Helper\UtilsHelper
      */
-    public $Crud;
+    public $Utils;
 
     /**
      * setUp method
@@ -26,8 +26,8 @@ class CrudComponentTest extends TestCase
     public function setUp()
     {
         parent::setUp();
-        $registry = new ComponentRegistry();
-        $this->Crud = new CrudComponent($registry);
+        $view = new View();
+        $this->Utils = new UtilsHelper($view);
     }
 
     /**
@@ -37,7 +37,7 @@ class CrudComponentTest extends TestCase
      */
     public function tearDown()
     {
-        unset($this->Crud);
+        unset($this->Utils);
 
         parent::tearDown();
     }

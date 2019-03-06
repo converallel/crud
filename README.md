@@ -79,4 +79,21 @@ all the requests in the `logs` database table.
   ```
 
 ### Templates
-In Progress ...
+When using one of the Crud component methods in your controller to load the response,
+the following variables will be available in the view:
+
+* `accessibleFields` The fields assignable by the users. (Only set if action is one of `add` and `edit`) 
+* `associations` The associations of the current table. E.g. An article's associations could be \['Authors', 'Tags'].
+* `className` The name of current controller.
+* `displayField` The display field of current table object.
+* `fields` The visible fields. (Fields other than the `_hidden` fields and id fields `XXX_id`)
+* `entity` / `entities` Only set if you are using the `/Common` templates.
+
+#### Template Abstraction
+Abstraction of .ctp files is encouraged, create your template files in `/Template/Common/`. 
+The template files in `/Common` will act as the *fallback* templates when the request template 
+is not found in the Cake-designated template folder.
+
+#### View Helper
+Crud provides a useful helper `Utils` to help you write your template files.
+To load this helper, add `$this->loadHelper('Crud.Utils');` in your `AppView`'s `initialize()` method.

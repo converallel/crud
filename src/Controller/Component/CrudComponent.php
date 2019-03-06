@@ -12,6 +12,7 @@ use Cake\Http\Exception\BadRequestException;
 use Cake\Http\Exception\InternalErrorException;
 use Cake\Http\Exception\NotFoundException;
 use Cake\Http\Response;
+use Cake\ORM\Association;
 use Cake\ORM\Query;
 use Cake\ORM\ResultSet;
 use Cake\Utility\Hash;
@@ -153,6 +154,36 @@ class CrudComponent extends Component
         return $this->_table;
     }
 
+    public function index($query = [], array $options = [])
+    {
+        $this->load($query, ['action' => 'index'] + $options);
+    }
+
+    public function view($query = [], array $options = [])
+    {
+        $this->load($query, ['action' => 'view'] + $options);
+    }
+
+    public function add($query = [], array $options = [])
+    {
+        $this->load($query, ['action' => 'add'] + $options);
+    }
+
+    public function edit($query = [], array $options = [])
+    {
+        $this->load($query, ['action' => 'edit'] + $options);
+    }
+
+    /**
+     *
+     * @param array|Query|EntityInterface|ResultSetInterface|ResultSet|null $query
+     * @param array $options options accepted by `Crud::load()`
+     */
+    public function delete($query = [], array $options = [])
+    {
+        $this->load($query, ['action' => 'delete'] + $options);
+    }
+
     /**
      * Load the query/object(s), carry out the request action and set the view.
      *
@@ -161,14 +192,16 @@ class CrudComponent extends Component
      * - `action` - The action to execute this query with. One of (index, view, add, edit, delete)
      * - `allowMethods` - The HTTP methods allowed for the current action.
      * - `updateMethods` - The HTTP methods that will carry out an update action in the database.
-     *   Usually one of (post, patch, put, delete)
+     *    Usually one of (post, patch, put, delete)
      * - `successMessage`
      * - `errorMessage`
      * - `pagination` - Settings for pagination.
      * - `infiniteScroll` - Settings for infiniteScroll.
      * - `objectHydration` - A list of options for the objects hydration.
      * - `viewVars` - Extra view variables to load into the view, e.g., ['tags', 'files' => ['contain' => 'Users'], ...].
-     * - `view` - View to use for rendering.
+     * - `template` - Template file to use for rendering. This can either be a path to the template file,
+     *    e.g. 'Articles/index', or the template name, e.g. 'index'. If only a template name is specified, this method will
+     *    look for this template file in the template folder corresponding to the current controller.
      *
      * @param array|Query|EntityInterface|ResultSetInterface|ResultSet|null $query
      * @param array $options
@@ -181,14 +214,14 @@ class CrudComponent extends Component
         $entity = $this->_getEntity($query, $options);
         $options = $this->_getActionConfig($options);
 
-        $action = $options['allowMethods'] ?? $this->_action;
+        $action = $options['action'] ?? $this->_action;
         $allowMethods = $options['allowMethods'];
         $updateMethods = $options['updateMethods'];
         $method = $options['method'];
         $successMessage = $options['successMessage'];
         $errorMessage = $options['errorMessage'];
         $viewVars = $options['viewVars'] ?? [];
-        $view = $options['view'] ?? '';
+        $template = $options['template'] ?? '';
 
         if (!empty($allowedMethods)) {
             $this->_request->allowMethod($allowMethods);
@@ -236,15 +269,77 @@ class CrudComponent extends Component
             return $this->serialize($entity);
         }
 
-        if ($action !== 'delete') {
-            $name = $entity instanceof \Countable ? lcfirst($this->_table->getAlias()) : $this->_entityName;
-            $this->_controller->set($name, $entity);
-            $this->setExtraViews($viewVars);
+        if ($template) {
+            $components = explode(DS, $template);
+            if (count($components) > 1) {
+                $template = array_pop($components);
+                $this->_controller->viewBuilder()->setTemplatePath(implode(DS, $components));
+            }
+            $this->_controller->viewBuilder()->setTemplate($template);
+        } elseif (
+            file_exists(APP . 'Template' . DS . 'Common' . DS . Inflector::underscore($this->_action) . '.ctp') &&
+            !file_exists(APP . 'Template' . DS . $this->_viewPath() . DS . Inflector::underscore($this->_action) . '.ctp')) {
+            $this->_controller->viewBuilder()->setTemplatePath('Common');
         }
 
-        if ($view) {
-            $this->_controller->render($view);
+        if ($action !== 'delete') {
+            $usingCommonTemplate = $this->_controller->viewBuilder()->getTemplatePath() === 'Common';
+            $entityName = $usingCommonTemplate ? 'entity' : $this->_entityName;
+            $entitiesName = $usingCommonTemplate ? 'entities' : lcfirst($this->_table->getAlias());
+            $name = $entity instanceof \Countable ? $entitiesName : $entityName;
+            $associations = array_values(array_map(function (Association $association) {
+                return $association->getName();
+            }, $this->_table->associations()->getIterator()->getArrayCopy()));
+            $className = $this->_controller->getName();
+            $displayField = $this->_table->getDisplayField();
+
+            // get all visible fields except 'XXX_id' where 'XXX' is in the fields
+            $fields = $entity instanceof EntityInterface ? $entity->visibleProperties() : $entity->first()->visibleProperties();
+            $fields = array_filter($fields, function ($field) use ($fields) {
+                $components = explode('_', $field);
+                if (count($components) > 1) {
+                    $last = array_pop($components);
+                    $first = implode('_', $components);
+                    return $last !== 'id' || !in_array($first, $fields);
+                }
+                return true;
+            });
+
+            // set accessible fields if action requires user input
+            if (in_array($action, ['add', 'edit'])) {
+                $entityFields = array_merge($this->_table->getSchema()->columns(), array_map(function ($association) {
+                    return Inflector::underscore($association);
+                }, $associations));
+                $accessibleFields = array_filter(array_merge($entityFields), function ($field) use ($entity) {
+                    return $entity->isAccessible($field);
+                });
+                $this->_controller->set(compact('accessibleFields'));
+            }
+
+            // set the view variables
+            $this->_controller->set($name, $entity);
+            $this->_controller->set(compact('associations', 'className', 'displayField', 'fields'));
+            $this->setExtraViews($viewVars);
         }
+    }
+
+    /**
+     * Get the viewPath based on controller name and request prefix.
+     *
+     * @return string
+     */
+    protected function _viewPath()
+    {
+        $viewPath = $this->_controller->getName();
+        if ($this->_request->getParam('prefix')) {
+            $prefixes = array_map(
+                'Cake\Utility\Inflector::camelize',
+                explode('/', $this->_request->getParam('prefix'))
+            );
+            $viewPath = implode(DIRECTORY_SEPARATOR, $prefixes) . DIRECTORY_SEPARATOR . $viewPath;
+        }
+
+        return $viewPath;
     }
 
     protected function _validateOptions($options)
@@ -259,7 +354,7 @@ class CrudComponent extends Component
             'infiniteScroll',
             'objectHydration',
             'viewVars',
-            'view'
+            'template'
         ];
 
         foreach ($options as $key => $value) {
